@@ -1,81 +1,86 @@
-## Recursive validator set validation
+## Light-client simulation
 
-See comments in [recursive.rs](recursive.rs)
+A chain whose validator set rotates every era, and a light client that follows it by checking
+one APK proof and one aggregate BLS signature per era. The design is explained in the comments
+of [common/light_client.rs](common/light_client.rs), which is written once against `ApkConfig`
+and run by two examples that differ only in the configuration:
 
-> cargo run --release --features "parallel print-trace" --example recursive 8 2
+- [apk_377.rs](apk_377.rs): BLS12-377 signatures, proofs over BW6-761, radix-2 domains.
+- [apk_381.rs](apk_381.rs): BLS12-381 signatures, proofs over BW6-767, mixed-radix domains.
 
-will produce a fancy output like
+Run from the `bw6` directory. `VALIDATORS` is the size of the validator set;
+the configuration chooses the evaluation domain and prints it.
+
+> cargo run --release --features "parallel print-trace" --example apk_381 -- VALIDATORS N_ERAS
+
+For example, `--example apk_381 -- 252 1` (single-threaded; timings are machine-dependent)
+produces
 
 ```
-Running a chain with 2^8-1 validators for 2 eras. To change the values run with '--example recursive LOG_N N_ERAS'
+The configuration picked an evaluation domain of 253 points for 252 validators.
 
-Setup: max validator set size = 2^8-1
+Start:   Generating PCS params to support 252 signers
+End:     Generating PCS params to support 252 signers ..............................96.886ms
 
-Start:   Generating URS to support 2^8-1 signers
-··Start:   Computing 766 scalars powers
-··End:     Computing 766 scalars powers ............................................67.700µs
-··Start:   766-scalar mul in G1
-··End:     766-scalar mul in G1 ....................................................62.327ms
-··Start:   2-scalar mul in G1
-··End:     2-scalar mul in G1 ......................................................26.416ms
-End:     Generating URS to support 2^8-1 signers ...................................92.094ms
+Genesis: validator set size = 252, quorum = 169
 
-Genesis: validator set size = 255, quorum = 171
-
-Start:   Computing commitment to the set of initial 255 validators
-End:     Computing commitment to the set of initial 255 validators .................92.884ms
+Start:   Computing commitment to the set of initial 252 validators
+End:     Computing commitment to the set of initial 252 validators .................69.400ms
 
 Era 1
 
-Start:   Each (honest) validators computes the commitment to the new validator set of size 255 and signs the commitment
-End:     Each (honest) validators computes the commitment to the new validator set of size 255 and signs the commitment 637.104ms
+Start:   Each (honest) validator computes the commitment to the new validator set of size 252 and signs the commitment
+End:     Each (honest) validator computes the commitment to the new validator set of size 252 and signs the commitment 255.544ms
 
-Start:   Helper aggregated 234 individual signatures on the same commitment and generates accountable light client proof of them
-End:     Helper aggregated 234 individual signatures on the same commitment and generates accountable light client proof of them 241.735ms
+Start:   Helper aggregates 200 individual signatures on the same commitment and generates accountable light client proof
+End:     Helper aggregates 200 individual signatures on the same commitment and generates accountable light client proof 285.193ms
 
-Start:   Light client verifies light client proof for 234 signers
+Start:   Light client verifies light client proof for 200 signers
 ··Start:   apk proof verification
+····Start:   subgroup checks
+····End:     subgroup checks .......................................................2.653ms
 ····Start:   linear accountability check
-····End:     linear accountability check ...........................................86.900µs
-····Start:   KZG check
+····End:     linear accountability check ...........................................42.167µs
+····Start:   PCS verification
 ······Start:   linearization polynomial commitment
-······End:     linearization polynomial commitment .................................1.849ms
-······Start:   aggregate evaluation claims in zeta
-······End:     aggregate evaluation claims in zeta .................................837.200µs
-······Start:   batched KZG openning
-······End:     batched KZG openning ................................................8.882ms
-······Start:   lazy subgroup check
-······End:     lazy subgroup check .................................................595.100µs
-····End:     KZG check .............................................................12.538ms
-··End:     apk proof verification ..................................................14.160ms
+······End:     linearization polynomial commitment .................................1.035ms
+······Start:   aggregate evaluation claims at zeta
+······End:     aggregate evaluation claims at zeta .................................505.916µs
+······Start:   batched PCS opening verification
+······End:     batched PCS opening verification ....................................5.301ms
+····End:     PCS verification ......................................................6.851ms
+··End:     apk proof verification ..................................................10.782ms
 ··Start:   aggregate BLS signature verification
-··End:     aggregate BLS signature verification ....................................3.154ms
-End:     Light client verifies light client proof for 234 signers ..................17.491ms
+··End:     aggregate BLS signature verification ....................................1.585ms
+End:     Light client verifies light client proof for 200 signers ..................12.374ms
 
 Era 2
 
-Start:   Each (honest) validators computes the commitment to the new validator set of size 255 and signs the commitment
-End:     Each (honest) validators computes the commitment to the new validator set of size 255 and signs the commitment 617.583ms
+Start:   Each (honest) validator computes the commitment to the new validator set of size 252 and signs the commitment
+End:     Each (honest) validator computes the commitment to the new validator set of size 252 and signs the commitment 259.974ms
 
-Start:   Helper aggregated 221 individual signatures on the same commitment and generates accountable light client proof of them
-End:     Helper aggregated 221 individual signatures on the same commitment and generates accountable light client proof of them 229.157ms
+Start:   Helper aggregates 207 individual signatures on the same commitment and generates accountable light client proof
+End:     Helper aggregates 207 individual signatures on the same commitment and generates accountable light client proof 278.119ms
 
-Start:   Light client verifies light client proof for 221 signers
+Start:   Light client verifies light client proof for 207 signers
 ··Start:   apk proof verification
+····Start:   subgroup checks
+····End:     subgroup checks .......................................................2.659ms
 ····Start:   linear accountability check
-····End:     linear accountability check ...........................................87.200µs
-····Start:   KZG check
+····End:     linear accountability check ...........................................38.708µs
+····Start:   PCS verification
 ······Start:   linearization polynomial commitment
-······End:     linearization polynomial commitment .................................1.888ms
-······Start:   aggregate evaluation claims in zeta
-······End:     aggregate evaluation claims in zeta .................................902.900µs
-······Start:   batched KZG openning
-······End:     batched KZG openning ................................................8.688ms
-······Start:   lazy subgroup check
-······End:     lazy subgroup check .................................................629.400µs
-····End:     KZG check .............................................................12.608ms
-··End:     apk proof verification ..................................................14.196ms
+······End:     linearization polynomial commitment .................................1.012ms
+······Start:   aggregate evaluation claims at zeta
+······End:     aggregate evaluation claims at zeta .................................484.083µs
+······Start:   batched PCS opening verification
+······End:     batched PCS opening verification ....................................5.256ms
+····End:     PCS verification ......................................................6.766ms
+··End:     apk proof verification ..................................................10.678ms
 ··Start:   aggregate BLS signature verification
-··End:     aggregate BLS signature verification ....................................3.178ms
-End:     Light client verifies light client proof for 221 signers ..................17.646ms
+··End:     aggregate BLS signature verification ....................................1.516ms
+End:     Light client verifies light client proof for 207 signers ..................12.202ms
 ```
+
+The parameters are generated locally from a known trapdoor (`InsecureSetup`), which is fine for a
+simulation and unsafe anywhere else.

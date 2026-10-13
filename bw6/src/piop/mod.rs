@@ -1,43 +1,54 @@
-use ark_bw6_761::{Fr, G1Affine};
-use ark_ff::Zero;
-use ark_poly::Radix2EvaluationDomain;
+use ark_ec::{AffineRepr, CurveGroup};
+use ark_ff::{Field, Zero};
 use ark_poly::univariate::DensePolynomial;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use w3f_pcs::pcs::PCS;
 
-use crate::{Bitmask, Keyset, PublicInput, utils};
+use crate::domain::{DomainSet, FftDomain};
 use crate::domains::Domains;
+use crate::{utils, AccumulatorSeed, ApkError, Bitmask, Keyset, PublicInput};
 
 pub mod affine_addition;
-pub mod bitmask_packing;
 pub mod bit_counting;
+pub mod bitmask_packing;
 
 pub mod basic;
-pub mod packed;
 pub mod counting;
+pub mod packed;
 
-
-pub trait RegisterCommitments: CanonicalSerialize + CanonicalDeserialize {
-    fn as_vec(&self) -> Vec<G1Affine>;
+pub trait RegisterCommitments<G: AffineRepr>: CanonicalSerialize + CanonicalDeserialize {
+    fn as_vec(&self) -> Vec<G>;
 }
 
-pub trait RegisterPolynomials {
-    type C: RegisterCommitments;
-    fn commit<F: Clone + Fn(&DensePolynomial<Fr>) -> G1Affine>(&self, f: F) -> Self::C;
+pub trait RegisterPolynomials<G: AffineRepr> {
+    type C: RegisterCommitments<G>;
+    fn commit<E, Comm: Clone + Fn(&DensePolynomial<G::ScalarField>) -> Result<G, E>>(
+        &self,
+        f: Comm,
+    ) -> Result<Self::C, E>;
 }
 
-impl RegisterCommitments for () {
-    fn as_vec(&self) -> Vec<G1Affine> {
+impl<G: AffineRepr> RegisterCommitments<G> for () {
+    fn as_vec(&self) -> Vec<G> {
         vec![]
     }
 }
 
-impl RegisterPolynomials for () {
+impl<G: AffineRepr> RegisterPolynomials<G> for () {
     type C = ();
 
-    fn commit<F: Fn(&DensePolynomial<Fr>) -> G1Affine>(&self, _f: F) -> Self::C {
-        ()
+    fn commit<E, F: Fn(&DensePolynomial<G::ScalarField>) -> Result<G, E>>(
+        &self,
+        _f: F,
+    ) -> Result<Self::C, E> {
+        Ok(())
     }
 }
+
+/// For the state a [`ProverProtocol`] fills in one round and reads in a later one.
+/// `Prover::prove` is the only driver and calls the rounds in order.
+pub(crate) const ROUNDS_IN_ORDER: &str =
+    "invariant: Prover::prove runs the protocol rounds in order";
 
 // PIOP stays for Polynomial Interactive Oracle Proof.
 // It's a type of information-theoretical interactive proof systems where to convince the verifier that
@@ -92,37 +103,57 @@ impl RegisterPolynomials for () {
 //    verifier is given the "linearization" polynomial that is enough to be queried once.
 //    It is efficient if the constraint polynomial is linear in all "shifted" terms ri(Zw).
 
-pub trait ProverProtocol {
-    type P1: RegisterPolynomials;
-    type P2: RegisterPolynomials;
-    type E: RegisterEvaluations;
-    type PI: PublicInput;
+pub trait ProverProtocol<IC, OC, S, D>
+where
+    IC: AccumulatorSeed,
+    OC: CurveGroup,
+    OC::ScalarField: From<IC::BaseField>,
+    S: PCS<OC::ScalarField>,
+    D: DomainSet<OC::ScalarField>,
+{
+    type P1: RegisterPolynomials<OC::Affine>;
+    type P2: RegisterPolynomials<OC::Affine>;
+    type E: RegisterEvaluations<OC::ScalarField>;
+    type PI: PublicInput<IC>;
 
-    fn init(domains: Domains, bitmask: Bitmask, keyset: Keyset) -> Self;
+    fn init(
+        domains: Domains<OC::ScalarField, D>,
+        bitmask: Bitmask,
+        keyset: Keyset<IC, OC, D>,
+    ) -> Self;
 
     // These 2 methods together return register polynomials the prover should commit to.
     // The 2nd one is used only in the "packed" scheme as it requires an additional challenge
     // (to aggregate the bitmask chunks) from the verifier,
     // that can be received only after the bitmask has been committed.
     fn get_register_polynomials_to_commit1(&self) -> Self::P1;
-    fn get_register_polynomials_to_commit2(&mut self, verifier_challenge: Fr) -> Self::P2;
+    fn get_register_polynomials_to_commit2(
+        &mut self,
+        verifier_challenge: OC::ScalarField,
+    ) -> Self::P2;
 
     // This method returns register polynomials the prover should open. Those are the same polynomials
     // as the previous 2 methods together, and additionally 2 polynomials representing the keyset
     // (prover doesn't need to commit to them, as verifier knows them anyway, but still should open).
-    fn get_register_polynomials_to_open(self) -> Vec<DensePolynomial<Fr>>;
+    fn get_register_polynomials_to_open(self) -> Vec<DensePolynomial<OC::ScalarField>>;
 
-    fn compute_constraint_polynomials(&self) -> Vec<DensePolynomial<Fr>>;
+    fn compute_constraint_polynomials(&self) -> Vec<DensePolynomial<OC::ScalarField>>;
 
     //TODO: remove domains param
-    fn compute_quotient_polynomial(&self, phi: Fr, domain: Radix2EvaluationDomain<Fr>) -> DensePolynomial<Fr> {
+    fn compute_quotient_polynomial(
+        &self,
+        phi: OC::ScalarField,
+        domain: &D::Domain,
+    ) -> Result<DensePolynomial<OC::ScalarField>, ApkError> {
         let w = utils::randomize(phi, &self.compute_constraint_polynomials());
-        let (q_poly, r) = w.divide_by_vanishing_poly(domain).unwrap();
-        assert_eq!(r, DensePolynomial::zero());
-        q_poly
+        let (q_poly, r) = domain.divide_by_vanishing_poly(&w);
+        if !r.is_zero() {
+            return Err(ApkError::ConstraintsNotSatisfied);
+        }
+        Ok(q_poly)
     }
 
-    fn evaluate_register_polynomials(&mut self, point: Fr) -> Self::E;
+    fn evaluate_register_polynomials(&mut self, point: OC::ScalarField) -> Self::E;
 
     // Some constraints require access to 2 consecutive rows of the registers, e.g. affine addition
     // adds 2 points that are represented as consecutive rows. In polynomials it is represented by evaluating
@@ -135,33 +166,34 @@ pub trait ProverProtocol {
     // The verifier can restore the commitment to this "linearization" polynomial from the commitments to the register polynomials and their evaluations in zeta,
     // so the required communication (for any number of polynomials) is just the proof and the evaluation.
     // Plonk section "Reducing the number of field elements" describes the same for some more general case.
-    fn compute_linearization_polynomial(&self, phi: Fr, zeta: Fr) -> DensePolynomial<Fr>;
+    fn compute_linearization_polynomial(
+        &self,
+        phi: OC::ScalarField,
+        zeta: OC::ScalarField,
+    ) -> DensePolynomial<OC::ScalarField>;
 }
 
-pub trait RegisterEvaluations: CanonicalSerialize + CanonicalDeserialize {
-    fn as_vec(&self) -> Vec<Fr>;
+pub trait RegisterEvaluations<F: Field>: CanonicalSerialize + CanonicalDeserialize {
+    fn as_vec(&self) -> Vec<F>;
 }
 
-pub trait VerifierProtocol {
-    type C1: RegisterCommitments; // commitments to ProverProtocol::P1
-    type C2: RegisterCommitments; // commitments to ProverProtocol::P2
+pub trait VerifierProtocol<IC, OC, S>
+where
+    IC: AccumulatorSeed,
+    OC: CurveGroup,
+    OC::ScalarField: From<IC::BaseField>,
+    S: PCS<OC::ScalarField>,
+{
+    type C1: RegisterCommitments<OC::Affine>; // commitments to ProverProtocol::P1
+    type C2: RegisterCommitments<OC::Affine>; // commitments to ProverProtocol::P2
 
     const POLYS_OPENED_AT_ZETA: usize;
 
     fn restore_commitment_to_linearization_polynomial(
         &self,
-        phi: Fr,
-        zeta_minus_omega_inv: Fr,
+        phi: OC::ScalarField,
+        zeta_minus_omega_inv: OC::ScalarField,
         commitments: &Self::C1,
         extra_commitments: &Self::C2,
-    ) -> ark_bw6_761::G1Projective;
-
-    // fn evaluate_constraint_polynomials(
-    //     &self,
-    //     apk: ark_bls12_377::G1Affine,
-    //     evals_at_zeta: &LagrangeEvaluations<Fr>,
-    //     r: Fr,
-    //     bitmask: &Bitmask,
-    //     domain_size: u64,
-    // ) -> Vec<Fr>;
+    ) -> OC;
 }

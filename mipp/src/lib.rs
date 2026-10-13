@@ -2,9 +2,11 @@
 mod tests {
     use ark_bls12_381::{Bls12_381, Fr, G1Projective};
     use ark_dh_commitments::afgho16::AFGHOCommitmentG1;
-    use ark_dh_commitments::DoublyHomomorphicCommitment;
-    use ark_dh_commitments::identity::{HomomorphicPlaceholderValue, IdentityCommitment, IdentityOutput};
+    use ark_dh_commitments::identity::{
+        HomomorphicPlaceholderValue, IdentityCommitment, IdentityOutput,
+    };
     use ark_dh_commitments::pedersen::PedersenCommitment;
+    use ark_dh_commitments::DoublyHomomorphicCommitment;
     use ark_ec::{PairingEngine, ProjectiveCurve};
     use ark_ff::{One, PrimeField, Zero};
     use ark_inner_products::{InnerProduct, MultiexponentiationInnerProduct, PairingInnerProduct};
@@ -36,7 +38,13 @@ mod tests {
             .map(|_| G1Projective::prime_subgroup_generator().mul(Fr::rand(rng).into_repr()))
             .collect::<Vec<_>>();
         let bitmask = (0..n)
-            .map(|_| if rng.gen::<bool>() { Fr::one() } else { Fr::zero() } )
+            .map(|_| {
+                if rng.gen::<bool>() {
+                    Fr::one()
+                } else {
+                    Fr::zero()
+                }
+            })
             .collect::<Vec<_>>();
         let apk = IP::inner_product(&pks, &bitmask).unwrap();
 
@@ -47,14 +55,15 @@ mod tests {
         let (ck, _) = srs.get_commitment_keys();
         let v_srs = srs.get_verifier_key();
 
-        let com_pks= PairingInnerProduct::<Bls12_381>::inner_product(&pks, &ck).unwrap();
+        let com_pks = PairingInnerProduct::<Bls12_381>::inner_product(&pks, &ck).unwrap();
 
         let prove = start_timer!(|| "MIPP_SRS::prove_with_structured_scalar_message");
         let proof = MIPP_SRS::prove_with_structured_scalar_message(
             &srs,
             (&pks, &bitmask),
             (&ck, &HomomorphicPlaceholderValue),
-        ).unwrap();
+        )
+        .unwrap();
         end_timer!(prove);
 
         let verify = start_timer!(|| "MIPP_SRS::verify_with_unfolded_right_message");
@@ -64,7 +73,8 @@ mod tests {
             (&com_pks, &IdentityOutput(vec![apk])),
             bitmask,
             &proof,
-        ).unwrap();
+        )
+        .unwrap();
         end_timer!(verify);
 
         assert!(proof_valid);
@@ -80,7 +90,13 @@ mod tests {
             .map(|_| G1Projective::prime_subgroup_generator().mul(Fr::rand(rng).into_repr()))
             .collect::<Vec<_>>();
         let bitmask = (0..n)
-            .map(|_| if rng.gen::<bool>() { Fr::one() } else { Fr::zero() } )
+            .map(|_| {
+                if rng.gen::<bool>() {
+                    Fr::one()
+                } else {
+                    Fr::zero()
+                }
+            })
             .collect::<Vec<_>>();
         let apk = IP::inner_product(&pks, &bitmask).unwrap();
 
@@ -100,7 +116,8 @@ mod tests {
         end_timer!(prove);
 
         let verify = start_timer!(|| "TIPA_KZG::verify");
-        let proof_valid = TIPA_KZG::verify(&v_srs, &ck_t, (&com_pks, &com_bitmask, &com_t), &proof).unwrap();
+        let proof_valid =
+            TIPA_KZG::verify(&v_srs, &ck_t, (&com_pks, &com_bitmask, &com_t), &proof).unwrap();
         end_timer!(verify);
 
         assert!(proof_valid);

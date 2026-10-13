@@ -1,0 +1,11 @@
+# Build output and VCS metadata: the image compiles from source.
+target/
+.git/
+.github/
+.idea/
+.claude/
+**/.DS_Store
+
+# Not needed to build or test the crate.
+Light Client.pdf
+*.patch

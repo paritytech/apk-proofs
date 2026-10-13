@@ -1,3 +1,7 @@
+> **Historical record.** These runs predate the current code: the test argument was then
+> `log2(domain size)`, and is now the number of validators (use `2^k - 1` for a domain of
+> `2^k`), and the test targets are now `basic_377`, `packed_377` and `counting_377`. Output labels have also changed since. Kept for the timings, not as instructions.
+
 Run 12/02/2022 on d26d87767050cb0817481e013cc2f6b8e82264b1
 
 ### The basic scheme

@@ -8,46 +8,68 @@ repository = "https://github.com/w3f/apk-proofs"
 categories = ["cryptography"]
 
 [dependencies]
-ark-std = { version = "0.4.0-alpha", default-features = false }
-ark-ff = { version = "0.4.0-alpha", default-features = false }
-ark-ec = { version = "0.4.0-alpha", default-features = false }
-ark-poly = { version = "0.4.0-alpha", default-features = false }
-ark-serialize = { version = "0.4.0-alpha", default-features = false, features = ["derive"] }
+ark-std = { version = "0.6", default-features = false }
+ark-ff = { version = "0.6", default-features = false }
+ark-ec = { version = "0.6", default-features = false }
+ark-poly = { version = "0.6", default-features = false }
+ark-serialize = { version = "0.6", default-features = false, features = ["derive"] }
 
-ark-bw6-761 = { version = "0.4.0-alpha.2", default-features = false }
-ark-bls12-377 = { version = "0.4.0-alpha.2", default-features = false, features = ["curve"] }
+ark-bw6-761 = { version = "0.6", default-features = false }
+ark-bw6-767 = { version = "0.6", default-features = false }
+ark-bls12-377 = { version = "0.6", default-features = false, features = ["curve"] }
+ark-bls12-381 = { version = "0.6", default-features = false, features = ["curve"] }
 
-fflonk = { git = "https://github.com/w3f/fflonk" }
+w3f-pcs = { git = "https://github.com/w3f/fflonk" }
 
 rand = "0.8"
 merlin = "3.0"
+# Used to derive subgroup generators: computing (q-1)/n needs division on the modulus,
+# which ark_ff::BigInteger does not provide.
+num-bigint = "0.4"
+num-integer = "0.1"
 blake2 = "0.9"
 rayon = { version = "1", optional = true }
 
 [dev-dependencies]
 criterion = "0.3"
+apk-proofs = { path = ".", features = ["test-utils"] }
 
 [[bench]]
 name = "bench"
 harness = false
 
 [[example]]
-name = "recursive"
+name = "apk_377"
+
+[[example]]
+name = "apk_381"
 
 [[test]]
-name = "basic"
+name = "basic_377"
 harness = false
 
 [[test]]
-name = "packed"
+name = "packed_377"
 harness = false
 
 [[test]]
-name = "counting"
+name = "counting_377"
+harness = false
+
+[[test]]
+name = "basic_381"
+harness = false
+
+[[test]]
+name = "counting_381"
 harness = false
 
 [features]
 default = []
 std = ["ark-std/std", "ark-ff/std", "ark-ec/std", "ark-poly/std", "ark-serialize/std"]
-parallel = ["std", "ark-std/parallel", "ark-ff/parallel", "ark-ec/parallel", "ark-poly/parallel", "fflonk/parallel", "rayon"]
+parallel = ["std", "ark-std/parallel", "ark-ff/parallel", "ark-ec/parallel", "ark-poly/parallel", "w3f-pcs/parallel", "rayon"]
 print-trace = ["ark-std/print-trace"]
+# Insecure fixtures for tests: local SRS generation (`setup::InsecureSetup`) and
+# `test_helpers`. Never enable this in production: whoever ran the
+# setup can forge proofs.
+test-utils = []

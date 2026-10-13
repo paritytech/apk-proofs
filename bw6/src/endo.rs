@@ -1,29 +1,24 @@
-use std::ops::AddAssign;
+//! Endomorphism-based G1 membership test for BW6 curves, used for BW6-761.
+//!
+//! BW6-761 G1 has an efficient endomorphism `φ: (x, y) ↦ (ωx, y)`, `ω` a primitive cube root of
+//! unity in the base field, acting on G1 as multiplication by an eigenvalue `λ`. Membership in
+//! G1 then reduces to a few multiplications by the (64-bit) BLS12-377 seed `u` instead of one by
+//! the 377-bit group order `r`.
 
-use ark_bw6_761::{Fq, G1Projective};
-use ark_ec::bls12::Bls12Config;
-use ark_ec::Group;
-use ark_ff::{BitIteratorBE, MontFp, Zero};
+use ark_ec::{
+    bw6::{BW6Config, G1Projective},
+    AdditiveGroup,
+};
+use ark_ff::{BitIteratorBE, Zero};
+use std::ops::AddAssign;
 
 // See https://github.com/celo-org/zexe/blob/master/algebra/src/bw6_761/curves/g1.rs#L37-L71
 // and also https://github.com/celo-org/zexe/blob/master/scripts/glv_lattice_basis/src/lib.rs
 
-/// phi((x, y)) = (\omega x, y)
-/// \omega = 0x531dc16c6ecd27aa846c61024e4cca6c1f31e53bd9603c2d17be416c5e44
-/// 26ee4a737f73b6f952ab5e57926fa701848e0a235a0a398300c65759fc4518315
-/// 1f2f082d4dcb5e37cb6290012d96f8819c547ba8a4000002f962140000000002a
-const OMEGA: Fq = MontFp!(
-        "196898582409020929727861073970057715139766638230382572845074161156680037021882725775086501\
-        3421937292370006175842381275743914023380727582819905021229583192207421122272650305267822868\
-        639090213645505120388400344940985710520836292650"
-);
-
-
-const U: &'static [u64] = ark_bls12_377::Config::X;
-
-fn mul_by_u(p: &G1Projective) -> G1Projective {
-    let mut res = G1Projective::zero();
-    for i in BitIteratorBE::without_leading_zeros(U) {
+/// Double-and-add by the non-negative integer whose little-endian limbs are `u`.
+fn mul_by_u<C: BW6Config>(p: &G1Projective<C>, u: &[u64]) -> G1Projective<C> {
+    let mut res = G1Projective::<C>::zero();
+    for i in BitIteratorBE::without_leading_zeros(u) {
         res.double_in_place();
         if i {
             res.add_assign(p)
@@ -32,35 +27,44 @@ fn mul_by_u(p: &G1Projective) -> G1Projective {
     res
 }
 
-fn glv_endomorphism_proj(p: &G1Projective) -> G1Projective {
-    G1Projective::new_unchecked(p.x * OMEGA, p.y, p.z)
+/// `φ(p) = (ωx, y)`, computed on projective coordinates.
+///
+/// `omega` is trusted to be the cube root of unity whose eigenvalue [`subgroup_check`]'s
+/// formula assumes; for BW6-761 that pairing is pinned by the tests below.
+fn glv_endomorphism_proj<C: BW6Config>(p: &G1Projective<C>, omega: C::Fp) -> G1Projective<C> {
+    G1Projective::<C>::new_unchecked(p.x * omega, p.y, p.z)
 }
 
-// See https://eprint.iacr.org/2020/351.pdf, section 3.1
-pub fn subgroup_check(p: &G1Projective) -> bool {
-    let up = mul_by_u(p);
-    let u2p = mul_by_u(&up);
-    let u3p = mul_by_u(&u2p);
+/// Whether `p` is in G1, given that it is on the curve: checks
+/// `[u + 1]p + φ([u^3 - u^2 + 1]p) = 0`.
+///
+/// `(u + 1, u^3 - u^2 + 1)` is a short vector of the lattice of pairs `(a, b)` with
+/// `a + λb ≡ 0 (mod r)`, so the combination vanishes on G1. That it vanishes nowhere else is a
+/// property of BW6-761's cofactor, checked against every small cofactor order by
+/// `instances::bls12_377_bw6_761::prime_subgroup`.
+/// The same test as gnark-crypto's `G1Jac.IsInSubGroup` for BW6-761,
+/// <https://github.com/Consensys/gnark-crypto/blob/fffb11080f9fcf9be636edd955860680e37e90f3/ecc/bw6-761/g1.go#L637-L660>.
+/// Also refer to [ePrint 2020/351](https://eprint.iacr.org/2020/351.pdf), section 3.1
+///
+/// `omega` and `u` must be BW6-761's [`OMEGA`](crate::instances::bls12_377_bw6_761::OMEGA) and
+/// [`U`](crate::instances::bls12_377_bw6_761::U): the formula is specific to that curve.
+pub fn subgroup_check<C: BW6Config>(p: &G1Projective<C>, omega: C::Fp, u: &[u64]) -> bool {
+    let up = mul_by_u::<C>(p, u);
+    let u2p = mul_by_u::<C>(&up, u);
+    let u3p = mul_by_u::<C>(&u2p, u);
 
-    (up + p + glv_endomorphism_proj(&(u3p - u2p + p))).is_zero()
+    (up + p + glv_endomorphism_proj::<C>(&(u3p - u2p + p), omega)).is_zero()
 }
-
 
 #[cfg(test)]
 mod tests {
-    use ark_bw6_761::{Fr, G1Affine};
+    use crate::instances::bls12_377_bw6_761::{LAMBDA, OMEGA, U};
+    use ark_bw6_761::{Config, Fq, G1Affine};
     use ark_ec::{AffineRepr, CurveGroup};
     use ark_ff::{Field, One};
     use ark_std::{test_rng, UniformRand};
 
     use super::*;
-
-    /// lambda in Z s.t. phi(P) = lambda*P for all P
-    /// \lambda = 0x9b3af05dd14f6ec619aaf7d34594aabc5ed1347970dec00452217cc900000008508c00000000001
-    const LAMBDA: Fr = MontFp!(
-        "809496482649127194085583631406374772648452947207104994781372872627125359383014618798134594\
-        10945"
-    );
 
     fn glv_endomorphism_in_place(p: &mut G1Affine) {
         let x = &mut p.x;
@@ -96,7 +100,7 @@ mod tests {
 
         let p = ark_bw6_761::G1Projective::rand(rng);
 
-        assert_eq!(glv_endomorphism_proj(&p), p * LAMBDA);
+        assert_eq!(glv_endomorphism_proj::<Config>(&p, OMEGA), p * LAMBDA);
     }
 
     #[test]
@@ -105,7 +109,7 @@ mod tests {
 
         let p = ark_bw6_761::G1Projective::rand(rng);
 
-        assert!(subgroup_check(&p));
+        assert!(subgroup_check::<Config>(&p, OMEGA, U));
 
         let point_not_in_g1 = loop {
             let x = Fq::rand(rng);
@@ -117,6 +121,10 @@ mod tests {
 
         assert!(point_not_in_g1.is_on_curve());
         assert!(!point_not_in_g1.is_in_correct_subgroup_assuming_on_curve());
-        assert!(!subgroup_check(&point_not_in_g1.into_group()));
+        assert!(!subgroup_check::<Config>(
+            &point_not_in_g1.into_group(),
+            OMEGA,
+            U
+        ));
     }
 }
